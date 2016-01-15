@@ -33,10 +33,12 @@ function test_udp_hdr(udphdr::UdpHdr)
     @test 0xa24a == udphdr.checksum
 end # function test_udp_hdr
 
-cap     = PcapOffline("data/dns-query-response.pcap")
-rec     = pcap_get_record(cap)
-layers  = decode_pkt(rec.payload)
+for f in ["data/dns-query-response.pcap", "data/dns-query-response-reverse.pcap"]
+    cap     = PcapOffline(f)
+    rec     = pcap_get_record(cap)
+    layers  = decode_pkt(rec.payload)
 
-test_eth_hdr(layers.datalink)
-test_ip_hdr(layers.network)
-test_udp_hdr(layers.protocol)
+    test_eth_hdr(layers.datalink)
+    test_ip_hdr(layers.network)
+    test_udp_hdr(layers.protocol)
+end

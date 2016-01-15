@@ -1,6 +1,9 @@
 export PcapFileHeader, PcapRec, PcapOffline,
        pcap_get_record
 
+reverse(b::UInt16) = (b << 8) | (b >> 8)
+reverse(b::UInt32) = (b << 24) | ((b << 8) & 0x00FF0000) | ((b >> 8) & 0x0000FF00) | (b >> 24)
+
 type PcapFileHeader
     magic_number::UInt32
     version_major::UInt16
@@ -9,7 +12,23 @@ type PcapFileHeader
     sigfigs::UInt32
     snaplen::UInt32
     network::UInt32
-    PcapFileHeader() = new(0,0,0,0,0,0,0)
+    readfunc::Function
+
+    PcapFileHeader() = new(0,0,0,0,0,0,0,(x->x))
+
+    function PcapFileHeader(file)
+        magic_number  = read(file, UInt32)
+        readfunc = magic_number == 0xa1b2c3d4 ? (x -> x) : reverse
+        version_major = readfunc(read(file, UInt16))
+        version_minor = readfunc(read(file, UInt16))
+        thiszone      = readfunc(read(file, UInt32))
+        sigfigs       = readfunc(read(file, UInt32))
+        snaplen       = readfunc(read(file, UInt32))
+        network       = readfunc(read(file, UInt32))
+
+        new(magic_number, version_major, version_minor,
+            thiszone, sigfigs, snaplen, network, readfunc)
+    end
 end # type PcapFileHeader
 
 type PcapRec
@@ -19,6 +38,15 @@ type PcapRec
     orig_len::UInt32
     payload::Array{UInt8}
     PcapRec() = new(0,0,0,0, Array(UInt8, 0))
+    function PcapRec(s)
+        readfunc = s.filehdr.readfunc
+        ts_sec   = readfunc(read(s.file, UInt32))
+        ts_usec  = readfunc(read(s.file, UInt32))
+        incl_len = readfunc(read(s.file, UInt32))
+        orig_len = readfunc(read(s.file, UInt32))
+        payload  = readbytes(s.file, incl_len)
+        new(ts_sec, ts_usec, incl_len, orig_len, payload)
+    end
 end # type PcapRec
 
 type PcapOffline
@@ -36,21 +64,23 @@ type PcapOffline
         hdr_read = false
         new(filename, file, filehdr, record, hdr_read)
     end # constructor
+
+    function PcapOffline(fileio::IO)
+        filename = "unknown"
+        file     = fileio
+        filehdr  = PcapFileHeader()
+        record   = PcapRec()
+        hdr_read = false
+        new(filename, file, filehdr, record, hdr_read)
+    end # constructor
+
 end # type PcapOffline
 
 #----------
 # decode PCap file format header
 #----------
 function pcap_get_header(s::PcapOffline)
-    filehdr = PcapFileHeader()
-    filehdr.magic_number  = read(s.file, UInt32)
-    filehdr.version_major = read(s.file, UInt16)
-    filehdr.version_minor = read(s.file, UInt16)
-    filehdr.thiszone      = read(s.file, Int32)
-    filehdr.sigfigs       = read(s.file, UInt32)
-    filehdr.snaplen       = read(s.file, UInt32)
-    filehdr.network       = read(s.file, UInt32)
-    s.filehdr  = filehdr
+    s.filehdr  = PcapFileHeader(s.file)
     s.hdr_read = true
 end # function pcap_get_header
 
@@ -62,14 +92,8 @@ function pcap_get_record(s::PcapOffline)
         pcap_get_header(s)
     end
 
-    rec = PcapRec()
-
     if (!eof(s.file))
-        rec.ts_sec   = read(s.file, UInt32)
-        rec.ts_usec  = read(s.file, UInt32)
-        rec.incl_len = read(s.file, UInt32)
-        rec.orig_len = read(s.file, UInt32)
-        rec.payload  = readbytes(s.file, rec.incl_len)
+        rec = PcapRec(s)
         return rec
     end
 
